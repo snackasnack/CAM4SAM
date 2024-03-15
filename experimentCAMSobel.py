@@ -45,6 +45,10 @@ def remove_outliers(points_array):
     data_array = np.array(points_array)
     mean = np.mean(data_array, axis=0)
     std_dev = np.std(data_array, axis=0)
+    
+    std_dev[std_dev == 0] = 1e-6 
+    std_dev[np.isnan(std_dev)] = 1e-6
+    
     threshold = 1.8
     z_scores = np.abs((data_array - mean) / std_dev)
     filtered_data = data_array[(z_scores < threshold).all(axis=1)]
@@ -68,6 +72,7 @@ def pointSelection(cam_threshold, sobel_threshold, sample_npy_data, sobel_filter
             
             boundary_points.append((y, x))
 
+    boundary_points = remove_outliers(boundary_points)
     boundary_points_array = np.array(boundary_points)
 
     # Apply DBSCAN clustering
@@ -163,13 +168,13 @@ def get_input(pointAnnoFile):
 
 
 def run_sam(sam_predictor, input_points, input_labels):
-    masks, _, _ = sam_predictor.predict(
+    masks, scores , logits = sam_predictor.predict(
     point_coords=input_points,
     point_labels=input_labels,
-    multimask_output=False, 
+    multimask_output=True, 
     )
 
-    return masks
+    return masks, scores , logits
 
 
 def getIou(sam_masks, file_name):
@@ -204,13 +209,15 @@ def experiment(thresholds, sample_image, sample_image_npy, sobel_filtered_image)
             sam_predictor = set_up_SAM()
             sam_process_image(sam_predictor, sample_image)
             input_points, input_labels = get_input(pointAnno)
-            masks = run_sam(sam_predictor, input_points, input_labels)
-            iou_result = getIou(masks, file_name)
+            masks, scores , logits = run_sam(sam_predictor, input_points, input_labels)
+            best_mask_index = np.argmax(scores)
+            best_mask = masks[best_mask_index]
+            iou_result = getIou(best_mask, file_name)
 
             try:
                 plt.figure(figsize=(10, 10))
                 plt.imshow(sample_image)
-                show_mask(masks[0], plt.gca())
+                show_mask(best_mask, plt.gca())
                 show_points(input_points, input_labels, plt.gca())
                 plt.axis('off')
                 saving_file_name = file_name + '_' +  str(iou_result) + '_' + str(cam_threshold) + '_' + str(sobel_threshold) + '_' + '_heatmap.png'
@@ -260,11 +267,12 @@ def experiment(thresholds, sample_image, sample_image_npy, sobel_filtered_image)
 
 
 if __name__ == '__main__':
+
     output_directory = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/'
 
     thresholds = {
-            'cam': [i / 100 for i in range(0, 39, 20)], 
-            'sobel': [i / 100 for i in range(70, 99, 10)] 
+            'cam': [i / 100 for i in range(1, 41, 20)], 
+            'sobel': [i / 100 for i in range(70, 89, 10)] 
             }
 
     with open("C:/Users/snack/Desktop/CAM4SAM/temp_files/classZeroSingleInstanceImages.txt", "r") as file:
@@ -272,11 +280,9 @@ if __name__ == '__main__':
             line = line.strip()
             file_name = line.replace(".npy", "")
 
-            # Print file name for debugging
             print(file_name)
-            sys.stdout.flush()  # Flush the output buffer
+            sys.stdout.flush() 
 
-            # experiment with threshold for each image
             sample_image, sample_image_npy = get_file_data(file_name)
             sobel_filtered_image = sobel_filter(sample_image_npy)
             
@@ -287,21 +293,23 @@ if __name__ == '__main__':
                     line = f"Top {i+1}: IOU = {iou}, threshold = {threshold}\n"
                     f.write(line)
     '''
-    file_name="2009_004409"
+    file_name="2007_002198"
     sample_image, sample_image_npy = get_file_data(file_name)
     sobel_filtered_image = sobel_filter(sample_image_npy)
-    pointAnno = pointSelection(0.0, 0.6, sample_image_npy, sobel_filtered_image)
+    pointAnno = pointSelection(0.4, 0.6, sample_image_npy, sobel_filtered_image)
     #pointAnno="C:/Users/snack/Desktop/CAM4SAM/temp_files/points_of_interest.txt"
     sam_predictor = set_up_SAM()
     sam_process_image(sam_predictor, sample_image)
     input_points, input_labels = get_input(pointAnno)
-    masks = run_sam(sam_predictor, input_points, input_labels)
+    masks, scores , logits = run_sam(sam_predictor, input_points, input_labels)
     iou_result = getIou(masks, file_name)
 
-    plt.figure(figsize=(10, 10))
-    plt.imshow(sample_image)
-    show_mask(masks[0], plt.gca())
-    show_points(input_points, input_labels, plt.gca())
-    plt.axis('off')
-    plt.show()
+    for i, (mask, score) in enumerate(zip(masks, scores)):
+        plt.figure(figsize=(10,10))
+        plt.imshow(sample_image)
+        show_mask(mask, plt.gca())
+        show_points(input_points, input_labels, plt.gca())
+        plt.title(f"Mask {i+1}, Score: {score:.3f}", fontsize=18)
+        plt.axis('off')
+        plt.show()  
     '''
