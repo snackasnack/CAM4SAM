@@ -10,6 +10,9 @@ import itertools
 import os
 import sys
 sys.path.append("..")
+import warnings
+
+warnings.filterwarnings("ignore")
 
 # Third-party library imports
 from matplotlib.image import imread
@@ -57,8 +60,8 @@ def remove_outliers(points_array):
     mean = np.mean(data_array, axis=0)
     std_dev = np.std(data_array, axis=0)
     
-    std_dev[std_dev == 0] = 1e-6 
-    std_dev[np.isnan(std_dev)] = 1e-6
+    std_dev = np.where(std_dev == 0, 1e-6, std_dev)
+    std_dev = np.where(np.isnan(std_dev), 1e-6, std_dev)
     
     threshold = 1.8
     z_scores = np.abs((data_array - mean) / std_dev)
@@ -196,12 +199,16 @@ def sam_process_image(sam_predictor, test_image):
 def points_in_box(box, points):
     x_min, y_min, x_max, y_max = box
     in_box = []
+
     for point in points:
-        x, y = point
-        if x_min <= x <= x_max and y_min <= y <= y_max:
+        if isinstance(point, (int, float)):
+            x = point
+            y = None 
+        else:
+            x, y = point
+        if (x is not None) and (y is not None) and (x_min <= x <= x_max) and (y_min <= y <= y_max):
             in_box.append(point)
     return np.array(in_box)
-
 
 def get_input(pointAnnoFile, boxAnnoFile):
     input_points = np.loadtxt(pointAnnoFile, delimiter=',')
@@ -335,14 +342,11 @@ def experiment(thresholds, sample_image, sample_image_npy, sobel_filtered_image)
 
 
 def refinedSAM(sample_image, sample_image_npy, sobel_filtered_image):
+    iou_result_lst = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/iou_results.txt'
 
     cam_threshold = 0.2
     sobel_threshold = 0.7
-
-    top_10_results = []
-    top_10_thresholds = []
-
-    max_retries = 3  # Maximum number of retries
+    max_retries = 4  # Maximum number of retries
 
     for _ in range(max_retries):
         try:
@@ -364,16 +368,27 @@ def refinedSAM(sample_image, sample_image_npy, sobel_filtered_image):
                 best_mask_index = np.argmax(scores)
                 best_masks.append(masks[best_mask_index])
 
-            # Combine the best masks
-            combined_mask = np.zeros_like(best_masks[0], dtype=bool)
-            for mask in best_masks:
-                combined_mask |= mask
+            if best_masks:
+                combined_mask = np.zeros_like(best_masks[0], dtype=bool)
+                for mask in best_masks:
+                    combined_mask |= mask
+            else:
+                print("No best masks found.")
+                combined_mask = np.zeros((sample_image.shape[0],sample_image.shape[1]), dtype=bool)
             iou_result = getIou(combined_mask, file_name)
+            with open(iou_result_lst, 'a') as f:
+                f.write(str(iou_result) + '\n')
 
             try:
                 plt.figure(figsize=(10, 10))
                 plt.imshow(sample_image)
                 show_mask(combined_mask, plt.gca())
+                for box in input_boxes:
+                    x_min, y_min, x_max, y_max = box
+                    width = x_max - x_min
+                    height = y_max - y_min
+                    rect = plt.Rectangle((x_min, y_min), width, height, linewidth=2, edgecolor='r', facecolor='none')
+                    plt.gca().add_patch(rect)
                 show_points(input_points, input_labels, plt.gca())
                 plt.axis('off')
                 saving_file_name = file_name + '_' +  str(iou_result) + '_' + str(cam_threshold) + '_' + str(sobel_threshold) + '_' + '_heatmap.png'
@@ -385,7 +400,7 @@ def refinedSAM(sample_image, sample_image_npy, sobel_filtered_image):
         except Exception as e:
             print(f"Error occurred for thresholds ({cam_threshold}, {sobel_threshold}): {e}")
             cam_threshold += 0.1
-            sobel_threshold -= 0.1
+            sobel_threshold -= 0.05
     else:
         print("Maximum retries reached. Failed to execute the code.")
 
@@ -393,6 +408,7 @@ def refinedSAM(sample_image, sample_image_npy, sobel_filtered_image):
 
 
 if __name__ == '__main__':
+    '''
     # running refined SAM to get results
     output_directory = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/'
 
@@ -407,7 +423,7 @@ if __name__ == '__main__':
             sample_image, sample_image_npy = get_file_data(file_name)
             sobel_filtered_image = sobel_filter(sample_image_npy)
             refinedSAM(sample_image, sample_image_npy, sobel_filtered_image)
-    '''
+
     # testing threshold ranges for a set of images
     output_directory = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/'
 
@@ -433,12 +449,12 @@ if __name__ == '__main__':
                 for i, (iou, threshold) in enumerate(zip(top_10_results, top_10_thresholds)):
                     line = f"Top {i+1}: IOU = {iou}, threshold = {threshold}\n"
                     f.write(line)
-    
+    '''
     # testing on single image
-    file_name="2007_002198"
+    file_name="2009_005120"
     sample_image, sample_image_npy = get_file_data(file_name)
     sobel_filtered_image = sobel_filter(sample_image_npy)
-    pointAnno = pointSelection(0.4, 0.6, sample_image_npy, sobel_filtered_image)
+    pointAnno = pointSelection(0.2, 0.6, sample_image_npy, sobel_filtered_image)
     #pointAnno="C:/Users/snack/Desktop/CAM4SAM/temp_files/points_of_interest.txt"
     boxAnno = groundingdino(file_name)
     sam_predictor = set_up_SAM()
@@ -461,9 +477,13 @@ if __name__ == '__main__':
         best_masks.append(masks[best_mask_index])
 
     # Combine the best masks
-    combined_mask = np.zeros_like(best_masks[0], dtype=bool)
-    for mask in best_masks:
-        combined_mask |= mask
+    if best_masks:
+        combined_mask = np.zeros_like(best_masks[0], dtype=bool)
+        for mask in best_masks:
+            combined_mask |= mask
+    else:
+        print("No best masks found.")
+        combined_mask = np.zeros((sample_image.shape[0],sample_image.shape[1]), dtype=bool)
 
     iou_result = getIou(combined_mask, file_name)
 
@@ -471,8 +491,14 @@ if __name__ == '__main__':
     plt.figure(figsize=(10,10))
     plt.imshow(sample_image)
     show_mask(combined_mask, plt.gca())
-    # Optionally, you can also show the input box and points here
+    for box in input_boxes:
+        x_min, y_min, x_max, y_max = box
+        width = x_max - x_min
+        height = y_max - y_min
+        rect = plt.Rectangle((x_min, y_min), width, height, linewidth=2, edgecolor='r', facecolor='none')
+        plt.gca().add_patch(rect)
+    #show_points(input_points, input_labels, plt.gca())
     plt.title("Combined Best Masks", fontsize=18)
     plt.axis('off')
     plt.show()
-    '''
+    
