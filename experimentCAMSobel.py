@@ -3,19 +3,30 @@ Using out_crf and sobel filter npy values
 Find out how to derive the best set of points for Segment Anything Model (SAM)
 '''
 
-import os
-import numpy as np
-from tqdm import tqdm
-import matplotlib.pyplot as plt
-from matplotlib.image import imread
+# Standard library imports
 from collections import Counter
+from io import BytesIO
+import itertools
+import os
+import sys
+sys.path.append("..")
+
+# Third-party library imports
+from matplotlib.image import imread
+import matplotlib.pyplot as plt
+import numpy as np
 import seaborn as sns
 from PIL import Image
-from io import BytesIO
-from scipy import ndimage
 import cv2
-import itertools
+from scipy import ndimage
 from sklearn.cluster import DBSCAN
+from tqdm import tqdm
+from torchvision.ops import box_convert
+import torch
+
+# Local application/library specific imports
+from groundingdino.util.inference import load_model, load_image, predict, annotate
+from segment_anything import sam_model_registry, SamPredictor
 
 
 def get_file_data(file_name):
@@ -101,17 +112,46 @@ def pointSelection(cam_threshold, sobel_threshold, sample_npy_data, sobel_filter
     return output_file_path
 
 
+# Grounding DINO
+
+def groundingdino(file_name, TEXT_PROMPT = 'plane', BOX_TRESHOLD = 0.35, TEXT_TRESHOLD = 0.25):
+    model = load_model("C:/Users/snack/Desktop/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py", "C:/Users/snack/Desktop/GroundingDINO/weights/groundingdino_swint_ogc.pth")
+    IMAGE_PATH = os.path.join('C:/Users/snack/Desktop/SEAM/VOC2012_data/JPEGImages/', file_name + '.jpg')
+    TEXT_PROMPT = "plane"
+    BOX_TRESHOLD = 0.35
+    TEXT_TRESHOLD = 0.25
+
+    image_source, image = load_image(IMAGE_PATH)
+
+    boxes, logits, phrases = predict(
+        model=model,
+        image=image,
+        caption=TEXT_PROMPT,
+        box_threshold=BOX_TRESHOLD,
+        text_threshold=TEXT_TRESHOLD
+    )
+
+    boxes_array = box_convert(boxes=boxes, in_fmt="cxcywh", out_fmt="xyxy").numpy()
+    height, width, _ = image_source.shape
+
+    # Convert bounding box coordinates from normalized values to pixel values
+    bounding_boxes_pixel = np.zeros_like(boxes_array)
+    for i, box in enumerate(boxes_array):
+        x_min, y_min, x_max, y_max = box
+        bounding_boxes_pixel[i, 0] = x_min * width 
+        bounding_boxes_pixel[i, 1] = y_min * height  
+        bounding_boxes_pixel[i, 2] = x_max * width 
+        bounding_boxes_pixel[i, 3] = y_max * height 
+
+    print(bounding_boxes_pixel)
+
+    output_file_path = os.path.join("C:/Users/snack/Desktop/CAM4SAM/temp_files/dino_boxes/"+ file_name + "_boxes.npy")
+    np.save(output_file_path, bounding_boxes_pixel)
+
+    return output_file_path
+
+
 # SAM 
-
-
-import numpy as np
-import torch
-import matplotlib.pyplot as plt
-import cv2
-import sys
-sys.path.append("..")
-from segment_anything import sam_model_registry, SamPredictor
-
 
 def show_mask(mask, ax, random_color=False):
     if random_color:
@@ -154,7 +194,7 @@ def sam_process_image(sam_predictor, test_image):
     sam_predictor.set_image(image)
 
 
-def get_input(pointAnnoFile):
+def get_input(pointAnnoFile, boxAnnoFile):
     input_points = np.loadtxt(pointAnnoFile, delimiter=',')
     if input_points.ndim == 1:
         input_points = input_points.reshape((1, -1))
@@ -164,13 +204,16 @@ def get_input(pointAnnoFile):
     for i, point in enumerate(input_points):
         input_labels[i] = 1
 
-    return input_points, input_labels
+    input_box = np.load(boxAnnoFile)
+    #
+    return input_points, input_labels, input_box
 
 
-def run_sam(sam_predictor, input_points, input_labels):
+def run_sam(sam_predictor, input_points, input_labels, input_box):
     masks, scores , logits = sam_predictor.predict(
     point_coords=input_points,
     point_labels=input_labels,
+    box = input_box,
     multimask_output=True, 
     )
 
@@ -206,10 +249,11 @@ def experiment(thresholds, sample_image, sample_image_npy, sobel_filtered_image)
         try:
             print(cam_threshold, sobel_threshold)
             pointAnno = pointSelection(cam_threshold, sobel_threshold, sample_image_npy, sobel_filtered_image)
+            boxAnno = groundingdino(file_name)
             sam_predictor = set_up_SAM()
             sam_process_image(sam_predictor, sample_image)
-            input_points, input_labels = get_input(pointAnno)
-            masks, scores , logits = run_sam(sam_predictor, input_points, input_labels)
+            input_points, input_labels, input_boxes = get_input(pointAnno, boxAnno)
+            masks, scores , logits = run_sam(sam_predictor, input_points, input_labels, input_boxes)
             best_mask_index = np.argmax(scores)
             best_mask = masks[best_mask_index]
             iou_result = getIou(best_mask, file_name)
@@ -267,7 +311,7 @@ def experiment(thresholds, sample_image, sample_image_npy, sobel_filtered_image)
 
 
 if __name__ == '__main__':
-
+    '''
     output_directory = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/'
 
     thresholds = {
@@ -293,23 +337,24 @@ if __name__ == '__main__':
                     line = f"Top {i+1}: IOU = {iou}, threshold = {threshold}\n"
                     f.write(line)
     '''
-    file_name="2007_002198"
+    file_name="2007_002266"
     sample_image, sample_image_npy = get_file_data(file_name)
     sobel_filtered_image = sobel_filter(sample_image_npy)
     pointAnno = pointSelection(0.4, 0.6, sample_image_npy, sobel_filtered_image)
     #pointAnno="C:/Users/snack/Desktop/CAM4SAM/temp_files/points_of_interest.txt"
+    boxAnno = groundingdino(file_name)
     sam_predictor = set_up_SAM()
     sam_process_image(sam_predictor, sample_image)
-    input_points, input_labels = get_input(pointAnno)
-    masks, scores , logits = run_sam(sam_predictor, input_points, input_labels)
+    input_points, input_labels, input_box = get_input(pointAnno, boxAnno)
+    masks, scores , logits = run_sam(sam_predictor, input_points, input_labels, input_box)
     iou_result = getIou(masks, file_name)
 
     for i, (mask, score) in enumerate(zip(masks, scores)):
         plt.figure(figsize=(10,10))
         plt.imshow(sample_image)
         show_mask(mask, plt.gca())
+        show_box(input_box[0], plt.gca())
         show_points(input_points, input_labels, plt.gca())
         plt.title(f"Mask {i+1}, Score: {score:.3f}", fontsize=18)
         plt.axis('off')
         plt.show()  
-    '''
