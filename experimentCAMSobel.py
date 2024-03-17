@@ -312,43 +312,108 @@ def experiment(thresholds, sample_image, sample_image_npy, sobel_filtered_image)
     sorted_top_10_results = [top_10_results[i] for i in sorted_indices]
     sorted_top_10_thresholds = [top_10_thresholds[i] for i in sorted_indices]
 
-    #top_10_results = sorted_top_10_results[:10]
-    #top_10_thresholds = sorted_top_10_thresholds[:10]
     top_10_results = sorted_top_10_results
     top_10_thresholds = sorted_top_10_thresholds
 
     try:
         cam_thresholds, sobel_thresholds = zip(*top_10_thresholds)
         iou_results = top_10_results
-
         bins = [np.linspace(0, 1, 21), np.linspace(0, 1, 21)]
         hist, xedges, yedges = np.histogram2d(cam_thresholds, sobel_thresholds, bins=bins, weights=iou_results)
-
-        # Plot the heatmap
         plt.figure(figsize=(10, 8))
         plt.imshow(hist.T, extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]], origin='lower', cmap='viridis')
         plt.colorbar(label='IOU Result')
         plt.xlabel('CAM Threshold')
         plt.ylabel('Sobel Threshold')
         plt.title('IOU Result vs. Threshold Combinations')
-
-        # Save the heatmap as an image
         output_file = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/heatmap/' + file_name + '_heatmap.png'
         plt.savefig(output_file, dpi=300)
-        #plt.show()
     except Exception as e:
         print(f"Error occurred while saving heatmap")
 
     return top_10_results, top_10_thresholds
 
 
+def refinedSAM(sample_image, sample_image_npy, sobel_filtered_image):
+
+    cam_threshold = 0.2
+    sobel_threshold = 0.7
+
+    top_10_results = []
+    top_10_thresholds = []
+
+    max_retries = 3  # Maximum number of retries
+
+    for _ in range(max_retries):
+        try:
+            pointAnno = pointSelection(cam_threshold, sobel_threshold, sample_image_npy, sobel_filtered_image)
+            boxAnno = groundingdino(file_name)
+            sam_predictor = set_up_SAM()
+            sam_process_image(sam_predictor, sample_image)
+            boxes_to_points = get_input(pointAnno, boxAnno)
+            input_boxes = np.load(boxAnno)
+            best_masks = []
+            for input_boxes_idx, input_points in boxes_to_points.items():
+                num_points = len(input_points)
+                input_labels = np.ones(num_points, dtype=int)
+                for i, point in enumerate(input_points):
+                    input_labels[i] = 1
+                input_box = input_boxes[input_boxes_idx]
+                
+                masks, scores, logits = run_sam(sam_predictor, input_points, input_labels, input_box)
+                best_mask_index = np.argmax(scores)
+                best_masks.append(masks[best_mask_index])
+
+            # Combine the best masks
+            combined_mask = np.zeros_like(best_masks[0], dtype=bool)
+            for mask in best_masks:
+                combined_mask |= mask
+            iou_result = getIou(combined_mask, file_name)
+
+            try:
+                plt.figure(figsize=(10, 10))
+                plt.imshow(sample_image)
+                show_mask(combined_mask, plt.gca())
+                show_points(input_points, input_labels, plt.gca())
+                plt.axis('off')
+                saving_file_name = file_name + '_' +  str(iou_result) + '_' + str(cam_threshold) + '_' + str(sobel_threshold) + '_' + '_heatmap.png'
+                output_file = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/best_masks/' + saving_file_name 
+                plt.savefig(output_file, dpi=300)
+            except Exception as e:
+                print(f"Error occurred while saving best masked image")
+            break
+        except Exception as e:
+            print(f"Error occurred for thresholds ({cam_threshold}, {sobel_threshold}): {e}")
+            cam_threshold += 0.1
+            sobel_threshold -= 0.1
+    else:
+        print("Maximum retries reached. Failed to execute the code.")
+
+    return None
+
+
 if __name__ == '__main__':
-    
+    # running refined SAM to get results
+    output_directory = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/'
+
+    with open("C:/Users/snack/Desktop/CAM4SAM/temp_files/classZeroSingleInstanceImages.txt", "r") as file:
+        for line in tqdm(file):
+            line = line.strip()
+            file_name = line.replace(".npy", "")
+
+            print(file_name)
+            sys.stdout.flush() 
+
+            sample_image, sample_image_npy = get_file_data(file_name)
+            sobel_filtered_image = sobel_filter(sample_image_npy)
+            refinedSAM(sample_image, sample_image_npy, sobel_filtered_image)
+    '''
+    # testing threshold ranges for a set of images
     output_directory = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/'
 
     thresholds = {
-            'cam': [i / 100 for i in range(30, 41, 20)], 
-            'sobel': [i / 100 for i in range(70, 89, 10)] 
+            'cam': [0.2], 
+            'sobel': [0.7] 
             }
 
     with open("C:/Users/snack/Desktop/CAM4SAM/temp_files/classZeroSingleInstanceImages.txt", "r") as file:
@@ -368,7 +433,8 @@ if __name__ == '__main__':
                 for i, (iou, threshold) in enumerate(zip(top_10_results, top_10_thresholds)):
                     line = f"Top {i+1}: IOU = {iou}, threshold = {threshold}\n"
                     f.write(line)
-    '''
+    
+    # testing on single image
     file_name="2007_002198"
     sample_image, sample_image_npy = get_file_data(file_name)
     sobel_filtered_image = sobel_filter(sample_image_npy)
