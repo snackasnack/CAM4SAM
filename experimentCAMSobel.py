@@ -109,6 +109,7 @@ def pointSelection(cam_threshold, sobel_threshold, sample_npy_data, sobel_filter
     # Save the selected points to a new file
     output_file_path = os.path.join('C:/Users/snack/Desktop/CAM4SAM/temp_files/points_of_interest.txt')
     np.savetxt(output_file_path, selected_points_array, fmt='%d', delimiter=',')
+
     return output_file_path
 
 
@@ -142,8 +143,6 @@ def groundingdino(file_name, TEXT_PROMPT = 'plane', BOX_TRESHOLD = 0.35, TEXT_TR
         bounding_boxes_pixel[i, 1] = y_min * height  
         bounding_boxes_pixel[i, 2] = x_max * width 
         bounding_boxes_pixel[i, 3] = y_max * height 
-
-    print(bounding_boxes_pixel)
 
     output_file_path = os.path.join("C:/Users/snack/Desktop/CAM4SAM/temp_files/dino_boxes/"+ file_name + "_boxes.npy")
     np.save(output_file_path, bounding_boxes_pixel)
@@ -194,26 +193,45 @@ def sam_process_image(sam_predictor, test_image):
     sam_predictor.set_image(image)
 
 
+def points_in_box(box, points):
+    x_min, y_min, x_max, y_max = box
+    in_box = []
+    for point in points:
+        x, y = point
+        if x_min <= x <= x_max and y_min <= y <= y_max:
+            in_box.append(point)
+    return np.array(in_box)
+
+
 def get_input(pointAnnoFile, boxAnnoFile):
     input_points = np.loadtxt(pointAnnoFile, delimiter=',')
-    if input_points.ndim == 1:
-        input_points = input_points.reshape((1, -1))
+    if input_points.ndim == 0:
+        print("There are no point annotations")
 
-    num_points = len(input_points)
-    input_labels = np.ones(num_points, dtype=int)
-    for i, point in enumerate(input_points):
-        input_labels[i] = 1
+    #num_points = len(input_points)
+    #input_labels = np.ones(num_points, dtype=int)
+    #for i, point in enumerate(input_points):
+    #    input_labels[i] = 1
 
-    input_box = np.load(boxAnnoFile)
-    #
-    return input_points, input_labels, input_box
+    input_boxes = np.load(boxAnnoFile)
+    no_instance_detected = input_boxes.ndim
+
+    boxes_to_points = {}
+
+    for idx, box in enumerate(input_boxes):
+        box_key = idx
+        in_box_points = points_in_box(box, input_points)        
+        if len(in_box_points) > 0:
+            boxes_to_points[box_key] = in_box_points
+
+    return boxes_to_points
 
 
-def run_sam(sam_predictor, input_points, input_labels, input_box):
+def run_sam(sam_predictor, input_points, input_labels, input_boxes):
     masks, scores , logits = sam_predictor.predict(
     point_coords=input_points,
     point_labels=input_labels,
-    box = input_box,
+    box = input_boxes,
     multimask_output=True, 
     )
 
@@ -252,16 +270,30 @@ def experiment(thresholds, sample_image, sample_image_npy, sobel_filtered_image)
             boxAnno = groundingdino(file_name)
             sam_predictor = set_up_SAM()
             sam_process_image(sam_predictor, sample_image)
-            input_points, input_labels, input_boxes = get_input(pointAnno, boxAnno)
-            masks, scores , logits = run_sam(sam_predictor, input_points, input_labels, input_boxes)
-            best_mask_index = np.argmax(scores)
-            best_mask = masks[best_mask_index]
-            iou_result = getIou(best_mask, file_name)
+            boxes_to_points = get_input(pointAnno, boxAnno)
+            input_boxes = np.load(boxAnno)
+            best_masks = []
+            for input_boxes_idx, input_points in boxes_to_points.items():
+                num_points = len(input_points)
+                input_labels = np.ones(num_points, dtype=int)
+                for i, point in enumerate(input_points):
+                    input_labels[i] = 1
+                input_box = input_boxes[input_boxes_idx]
+                
+                masks, scores, logits = run_sam(sam_predictor, input_points, input_labels, input_box)
+                best_mask_index = np.argmax(scores)
+                best_masks.append(masks[best_mask_index])
+
+            # Combine the best masks
+            combined_mask = np.zeros_like(best_masks[0], dtype=bool)
+            for mask in best_masks:
+                combined_mask |= mask
+            iou_result = getIou(combined_mask, file_name)
 
             try:
                 plt.figure(figsize=(10, 10))
                 plt.imshow(sample_image)
-                show_mask(best_mask, plt.gca())
+                show_mask(combined_mask, plt.gca())
                 show_points(input_points, input_labels, plt.gca())
                 plt.axis('off')
                 saving_file_name = file_name + '_' +  str(iou_result) + '_' + str(cam_threshold) + '_' + str(sobel_threshold) + '_' + '_heatmap.png'
@@ -311,11 +343,11 @@ def experiment(thresholds, sample_image, sample_image_npy, sobel_filtered_image)
 
 
 if __name__ == '__main__':
-    '''
+    
     output_directory = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/'
 
     thresholds = {
-            'cam': [i / 100 for i in range(1, 41, 20)], 
+            'cam': [i / 100 for i in range(30, 41, 20)], 
             'sobel': [i / 100 for i in range(70, 89, 10)] 
             }
 
@@ -337,7 +369,7 @@ if __name__ == '__main__':
                     line = f"Top {i+1}: IOU = {iou}, threshold = {threshold}\n"
                     f.write(line)
     '''
-    file_name="2007_002266"
+    file_name="2007_002198"
     sample_image, sample_image_npy = get_file_data(file_name)
     sobel_filtered_image = sobel_filter(sample_image_npy)
     pointAnno = pointSelection(0.4, 0.6, sample_image_npy, sobel_filtered_image)
@@ -345,16 +377,36 @@ if __name__ == '__main__':
     boxAnno = groundingdino(file_name)
     sam_predictor = set_up_SAM()
     sam_process_image(sam_predictor, sample_image)
-    input_points, input_labels, input_box = get_input(pointAnno, boxAnno)
-    masks, scores , logits = run_sam(sam_predictor, input_points, input_labels, input_box)
-    iou_result = getIou(masks, file_name)
+    boxes_to_points = get_input(pointAnno, boxAnno)
+    
+    input_boxes = np.load(boxAnno)
 
-    for i, (mask, score) in enumerate(zip(masks, scores)):
-        plt.figure(figsize=(10,10))
-        plt.imshow(sample_image)
-        show_mask(mask, plt.gca())
-        show_box(input_box[0], plt.gca())
-        show_points(input_points, input_labels, plt.gca())
-        plt.title(f"Mask {i+1}, Score: {score:.3f}", fontsize=18)
-        plt.axis('off')
-        plt.show()  
+    best_masks = []
+
+    for input_boxes_idx, input_points in boxes_to_points.items():
+        num_points = len(input_points)
+        input_labels = np.ones(num_points, dtype=int)
+        for i, point in enumerate(input_points):
+            input_labels[i] = 1
+        input_box = input_boxes[input_boxes_idx]
+        
+        masks, scores, logits = run_sam(sam_predictor, input_points, input_labels, input_box)
+        best_mask_index = np.argmax(scores)
+        best_masks.append(masks[best_mask_index])
+
+    # Combine the best masks
+    combined_mask = np.zeros_like(best_masks[0], dtype=bool)
+    for mask in best_masks:
+        combined_mask |= mask
+
+    iou_result = getIou(combined_mask, file_name)
+
+    # Visualization code for the combined mask
+    plt.figure(figsize=(10,10))
+    plt.imshow(sample_image)
+    show_mask(combined_mask, plt.gca())
+    # Optionally, you can also show the input box and points here
+    plt.title("Combined Best Masks", fontsize=18)
+    plt.axis('off')
+    plt.show()
+    '''
