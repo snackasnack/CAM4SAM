@@ -40,7 +40,7 @@ def get_file_data(file_name):
     #image_crf_npy = os.path.join('C:/Users/snack/Desktop/SEAM/voc12/out_crf_4.0', file_name + '.npy')
     #sample_npy_data = np.load(image_crf_npy, allow_pickle=True).item()
 
-    image_cam_npy = os.path.join('C:/Users/snack/Desktop/SEAM/voc12/out_cam', file_name + '.npy')
+    image_cam_npy = os.path.join('C:/Users/snack/Desktop/SEAM/voc12/out_cam/'+ file_name + '.npy')
     sample_npy_data = np.load(image_cam_npy, allow_pickle=True).item()
     
     return sample_zero_image, sample_npy_data
@@ -68,6 +68,15 @@ def remove_outliers(points_array):
     filtered_data = data_array[(z_scores < threshold).all(axis=1)]
     
     return filtered_data
+
+
+def baselinePointSelection(sample_npy_data):
+    points_of_interest = np.where((sample_npy_data[0] <= 0.2))
+    filtered_points_of_interest = remove_outliers(points_of_interest)   
+    centroid_y = np.mean(filtered_points_of_interest[0])
+    centroid_x = np.mean(filtered_points_of_interest[1])
+    centroid = (centroid_x, centroid_y)
+    return centroid
 
 
 def pointSelection(cam_threshold, sobel_threshold, sample_npy_data, sobel_filtered_image):
@@ -210,15 +219,11 @@ def points_in_box(box, points):
             in_box.append(point)
     return np.array(in_box)
 
+
 def get_input(pointAnnoFile, boxAnnoFile):
     input_points = np.loadtxt(pointAnnoFile, delimiter=',')
     if input_points.ndim == 0:
         print("There are no point annotations")
-
-    #num_points = len(input_points)
-    #input_labels = np.ones(num_points, dtype=int)
-    #for i, point in enumerate(input_points):
-    #    input_labels[i] = 1
 
     input_boxes = np.load(boxAnnoFile)
     no_instance_detected = input_boxes.ndim
@@ -234,13 +239,20 @@ def get_input(pointAnnoFile, boxAnnoFile):
     return boxes_to_points
 
 
-def run_sam(sam_predictor, input_points, input_labels, input_boxes):
-    masks, scores , logits = sam_predictor.predict(
-    point_coords=input_points,
-    point_labels=input_labels,
-    box = input_boxes,
-    multimask_output=True, 
-    )
+def run_sam(sam_predictor, input_points, input_labels, input_boxes=None):
+    if input_boxes is not None:
+        masks, scores , logits = sam_predictor.predict(
+        point_coords=input_points,
+        point_labels=input_labels,
+        box = input_boxes,
+        multimask_output=True, 
+        )
+    else: 
+        masks, scores , logits = sam_predictor.predict(
+        point_coords=input_points,
+        point_labels=input_labels,
+        multimask_output=True, 
+        )
 
     return masks, scores , logits
 
@@ -407,6 +419,43 @@ def refinedSAM(sample_image, sample_image_npy, sobel_filtered_image):
     return None
 
 
+def baselineModel(sample_image, sample_image_npy):
+    iou_result_lst = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/baseline_iou_results.txt'
+    max_retries = 0  # Maximum number of retries
+
+    try:
+        pointAnno = baselinePointSelection(sample_image_npy)
+        sam_predictor = set_up_SAM()
+        sam_process_image(sam_predictor, sample_image)
+        input_point = np.array([pointAnno])
+        input_label = [1]
+            
+        masks, scores, logits = run_sam(sam_predictor, input_point, input_label)
+        best_mask_index = np.argmax(scores)
+        best_mask = masks[best_mask_index]
+        best_mask = np.array(best_mask)
+    
+        iou_result = getIou(best_mask, file_name)
+        with open(iou_result_lst, 'a') as f:
+            f.write(str(iou_result) + '\n')
+
+        try:
+            plt.figure(figsize=(10, 10))
+            plt.imshow(sample_image)
+            show_mask(best_mask, plt.gca())
+            plt.scatter(input_point[:, 0], input_point[:, 1], color='red', marker='*', s=400)
+            plt.axis('off')
+            saving_file_name = file_name + '_' +  str(iou_result) + '_' + '_mask.png'
+            output_file = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/best_masks/' + saving_file_name 
+            plt.savefig(output_file, dpi=300)
+        except Exception as e:
+            print(f"Error occurred while saving best masked image")
+    except Exception as e:
+        print(f"Error occurred: {e}")
+
+    return None
+
+
 if __name__ == '__main__':
     '''
     # running refined SAM to get results
@@ -449,7 +498,7 @@ if __name__ == '__main__':
                 for i, (iou, threshold) in enumerate(zip(top_10_results, top_10_thresholds)):
                     line = f"Top {i+1}: IOU = {iou}, threshold = {threshold}\n"
                     f.write(line)
-    '''
+
     # testing on single image
     file_name="2009_005120"
     sample_image, sample_image_npy = get_file_data(file_name)
@@ -501,4 +550,17 @@ if __name__ == '__main__':
     plt.title("Combined Best Masks", fontsize=18)
     plt.axis('off')
     plt.show()
-    
+    '''
+    # testing baseline model
+    output_directory = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/'
+
+    with open("C:/Users/snack/Desktop/CAM4SAM/temp_files/classZeroSingleInstanceImages.txt", "r") as file:
+        for line in tqdm(file):
+            line = line.strip()
+            file_name = line.replace(".npy", "")
+
+            print(file_name)
+            sys.stdout.flush() 
+
+            sample_image, sample_image_npy = get_file_data(file_name)
+            baselineModel(sample_image, sample_image_npy)
