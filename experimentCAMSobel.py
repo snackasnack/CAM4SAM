@@ -272,29 +272,30 @@ def getIou(sam_masks, file_name):
 
     # Compute IoU
     iou = np.sum(intersection) / np.sum(union)
-    print(iou*100)
+    #print(iou*100)
     
     return iou*100
 
 
-def experiment(thresholds, sample_image, sample_image_npy, sobel_filtered_image):
+def experiment(file_name, thresholds, sample_image, sample_image_npy, sobel_filtered_image):
 
     mask_results = []
-    threshold_combi = []
+    #threshold_combi = []
+    
 
     for cam_threshold, sobel_threshold in itertools.product(thresholds['cam'], thresholds['sobel']):
-        print(cam_threshold, sobel_threshold)
+        #print(cam_threshold, sobel_threshold)
+        #print(mask_results)
         try:
             pointAnno = pointSelection(cam_threshold, sobel_threshold, sample_image_npy, sobel_filtered_image)
             boxAnno = groundingdino(file_name)
-            sam_predictor = set_up_SAM()
-            sam_process_image(sam_predictor, sample_image)
             boxes_to_points = get_input(pointAnno, boxAnno)
             input_boxes = np.load(boxAnno)
+            sam_predictor = set_up_SAM()
+            sam_process_image(sam_predictor, sample_image)
             best_masks = []
             for input_boxes_idx, input_points in boxes_to_points.items():
-                num_points = len(input_points)
-                input_labels = np.ones(num_points, dtype=int)
+                input_labels = np.ones(len(input_points), dtype=int)
                 for i, point in enumerate(input_points):
                     input_labels[i] = 1
                 input_box = input_boxes[input_boxes_idx]
@@ -307,7 +308,7 @@ def experiment(thresholds, sample_image, sample_image_npy, sobel_filtered_image)
             for mask in best_masks:
                 combined_mask |= mask
             iou_result = getIou(combined_mask, file_name)
-
+            '''
             try:
                 plt.figure(figsize=(10, 10))
                 plt.imshow(sample_image)
@@ -325,16 +326,26 @@ def experiment(thresholds, sample_image, sample_image_npy, sobel_filtered_image)
                 plt.savefig(output_file, dpi=300)
             except Exception as e:
                 print(f"Error occurred while saving best masked image")
+            '''
 
-            mask_results.append(iou_result)
-            threshold_combi.append((cam_threshold, sobel_threshold))
+            #mask_results.append(iou_result)
+            #threshold_combi.append((cam_threshold, sobel_threshold))
+            mask_results.append([iou_result, cam_threshold, sobel_threshold])
         except Exception as e:
             print(f"Error occurred for thresholds ({cam_threshold}, {sobel_threshold}): {e}")
+            #mask_results.append(float(0.0))
+            #threshold_combi.append((cam_threshold, sobel_threshold))
+            mask_results.append([float(0.0), cam_threshold, sobel_threshold])
             continue
+    
+    output_file = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/mask_results/' + file_name + '_mask_results.txt'
+    with open(output_file, 'w') as f:
+        for result in mask_results:
+            f.write(','.join(map(str, result)) + '\n')
 
-    sorted_indices = sorted(range(len(mask_results)), key=lambda i: mask_results[i], reverse=True)
-    sorted_mask_results = [mask_results[i] for i in sorted_indices]
-    sorted_threshold_combi = [threshold_combi[i] for i in sorted_indices]
+    #sorted_indices = sorted(range(len(mask_results)), key=lambda i: mask_results[i], reverse=True)
+    #sorted_mask_results = [mask_results[i] for i in sorted_indices]
+    #sorted_threshold_combi = [threshold_combi[i] for i in sorted_indices]
 
     '''
     try:
@@ -353,7 +364,8 @@ def experiment(thresholds, sample_image, sample_image_npy, sobel_filtered_image)
     except Exception as e:
         print(f"Error occurred while saving heatmap")
     '''
-    return sorted_mask_results, sorted_threshold_combi
+    #return sorted_mask_results, sorted_threshold_combi
+    return None
 
 
 def refinedSAM(sample_image, sample_image_npy, sobel_filtered_image):
@@ -485,7 +497,7 @@ if __name__ == '__main__':
             }
 
     with open("C:/Users/snack/Desktop/CAM4SAM/temp_files/classZeroSingleInstanceImages.txt", "r") as file:
-        for line in tqdm(file):
+        for line in file:
             line = line.strip()
             file_name = line.replace(".npy", "")
 
@@ -495,22 +507,8 @@ if __name__ == '__main__':
             sample_image, sample_image_npy = get_file_data(file_name)
             sobel_filtered_image = sobel_filter(sample_image_npy)
             
-            mask_results, threshold_combi = experiment(thresholds, sample_image, sample_image_npy, sobel_filtered_image)
-            output_file = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/mask_results/' + file_name + '_mask_results.txt'
-
-            file_results = {}
-            for file_name, (mask_results, threshold_combi) in zip(file_names, results):
-                file_results[file_name] = []
-                for i, (iou, threshold) in enumerate(zip(mask_results, threshold_combi)):
-                    file_results[file_name].append((iou, threshold))
-
-            with open(output_file, "w") as f:
-                for file_name, results in file_results.items():
-                    f.write(f"File: {file_name}\n")
-                    for i, (iou, threshold) in enumerate(results):
-                        line = f"Top {i+1}: IOU = {iou}, threshold = {threshold}\n"
-                        f.write(line)
-                    f.write("\n")
+            experiment(file_name, thresholds, sample_image, sample_image_npy, sobel_filtered_image)
+            #output_file = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/mask_results/' + file_name + '_mask_results.txt'
 
             #output_file = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/mask_results/' + file_name + '_mask_results.txt'
             #with open(output_file, "w") as f:
