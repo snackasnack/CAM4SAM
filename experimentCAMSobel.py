@@ -380,71 +380,64 @@ def experiment(file_name, thresholds, sample_image, sample_image_npy, sobel_filt
 def refinedSAM(cam_threshold, sobel_threshold, sample_image, sample_image_npy, sobel_filtered_image):
     iou_result_lst = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/iou_results.txt'
 
-    #cam_threshold = 0.2
-    #sobel_threshold = 0.7
-    max_retries = 4  # Maximum number of retries
-
-    for _ in range(max_retries):
-        try:
-            pointAnno = pointSelection(cam_threshold, sobel_threshold, sample_image_npy, sobel_filtered_image)
-            boxAnno = groundingdino(file_name)
-            sam_predictor = set_up_SAM()
-            sam_process_image(sam_predictor, sample_image)
-            boxes_to_points = get_input(pointAnno, boxAnno)
-            input_boxes = np.load(boxAnno)
-            best_masks = []
-            for input_boxes_idx, input_points in boxes_to_points.items():
-                num_points = len(input_points)
-                input_labels = np.ones(num_points, dtype=int)
-                for i, point in enumerate(input_points):
-                    input_labels[i] = 1
-                input_box = input_boxes[input_boxes_idx]
-                
-                masks, scores, logits = run_sam(sam_predictor, input_points, input_labels, input_box)
-                best_mask_index = np.argmax(scores)
-                best_masks.append(masks[best_mask_index])
-
-            if best_masks:
-                combined_mask = np.zeros_like(best_masks[0], dtype=bool)
-                for mask in best_masks:
-                    combined_mask |= mask
+    try:
+        pointAnno = pointSelection(cam_threshold, sobel_threshold, sample_image_npy, sobel_filtered_image)
+        boxAnno = groundingdino(file_name)
+        sam_predictor = set_up_SAM()
+        sam_process_image(sam_predictor, sample_image)
+        boxes_to_points = get_input(pointAnno, boxAnno)
+        input_boxes = np.load(boxAnno)
+        best_masks = []
+        for input_boxes_idx, input_points in boxes_to_points.items():
+            num_points = len(input_points)
+            input_labels = np.ones(num_points, dtype=int)
+            for i, point in enumerate(input_points):
+                input_labels[i] = 1
+            input_box = input_boxes[input_boxes_idx]
+            
+            if len(input_points) == 0:
+                masks, scores, logits = run_sam(sam_predictor, input_boxes = input_box)
             else:
-                print("No best masks found.")
-                combined_mask = np.zeros((sample_image.shape[0],sample_image.shape[1]), dtype=bool)
-            iou_result = getIou(combined_mask, file_name)
-            with open(iou_result_lst, 'a') as f:
-                f.write(str(iou_result) + '\n')
+                masks, scores, logits = run_sam(sam_predictor, input_points, input_labels, input_box)
+            best_mask_index = np.argmax(scores)
+            best_masks.append(masks[best_mask_index])
+        if best_masks:
+            combined_mask = np.zeros_like(best_masks[0], dtype=bool)
+            for mask in best_masks:
+                combined_mask |= mask
+        else:
+            print("No best masks found.")
+            combined_mask = np.zeros((sample_image.shape[0],sample_image.shape[1]), dtype=bool)
+        iou_result = getIou(combined_mask, file_name)
+        with open(iou_result_lst, 'a') as f:
+            f.write(str(iou_result) + '\n')
 
-            try:
-                plt.figure(figsize=(10, 10))
-                plt.imshow(sample_image)
-                show_mask(combined_mask, plt.gca())
-                for box in input_boxes:
-                    x_min, y_min, x_max, y_max = box
-                    width = x_max - x_min
-                    height = y_max - y_min
-                    rect = plt.Rectangle((x_min, y_min), width, height, linewidth=2, edgecolor='r', facecolor='none')
-                    plt.gca().add_patch(rect)
-                show_points(input_points, input_labels, plt.gca())
-                plt.axis('off')
-                saving_file_name = file_name + '_' +  str(iou_result) + '_' + str(cam_threshold) + '_' + str(sobel_threshold) + '_' + '_mask.png'
-                output_file = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/best_masks/' + saving_file_name 
-                plt.savefig(output_file, dpi=300)
-            except Exception as e:
-                print(f"Error occurred while saving best masked image")
-            break
+        try:
+            plt.figure(figsize=(10, 10))
+            plt.imshow(sample_image)
+            show_mask(combined_mask, plt.gca())
+            for box in input_boxes:
+                x_min, y_min, x_max, y_max = box
+                width = x_max - x_min
+                height = y_max - y_min
+                rect = plt.Rectangle((x_min, y_min), width, height, linewidth=2, edgecolor='r', facecolor='none')
+                plt.gca().add_patch(rect)
+            show_points(input_points, input_labels, plt.gca())
+            plt.axis('off')
+            saving_file_name = file_name + '_' +  str(iou_result) + '_' + str(cam_threshold) + '_' + str(sobel_threshold) + '_' + '_mask.png'
+            output_file = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/best_masks/' + saving_file_name 
+            plt.savefig(output_file, dpi=300)
         except Exception as e:
-            print(f"Error occurred for thresholds ({cam_threshold}, {sobel_threshold}): {e}")
-            cam_threshold += 0.1
-            sobel_threshold -= 0.05
-    else:
-        print("Maximum retries reached. Failed to execute the code.")
+            print(f"Error occurred while saving best masked image")
+            baselineModel(sample_image, sample_image_npy, iou_result_lst = iou_result_lst)
+    except Exception as e:
+        print(f"Error occurred for thresholds, falling back to baseline model: {e}")
+        baselineModel(sample_image, sample_image_npy, iou_result_lst = iou_result_lst)
 
     return None
 
 
-def baselineModel(sample_image, sample_image_npy):
-    iou_result_lst = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/baseline_iou_results.txt'
+def baselineModel(sample_image, sample_image_npy, iou_result_lst = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/baseline_iou_results.txt'):
     max_retries = 0  # Maximum number of retries
 
     try:
@@ -488,7 +481,7 @@ def baselineModel(sample_image, sample_image_npy):
 
 
 if __name__ == '__main__':
-    '''
+    
     # predict CAM and sobel thresholds in batch
     files = []
     with open("C:/Users/snack/Desktop/CAM4SAM/temp_files/classZeroSingleInstanceImages.txt", "r") as file:
@@ -522,7 +515,7 @@ if __name__ == '__main__':
             threshold_idx += 1
     
     output_directory = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/'
-    
+    '''
     # testing threshold ranges for a set of images
     thresholds = {
             'cam': [0.1, 0.2, 0.3, 0.4, 0.5, 0.6], 
@@ -600,7 +593,7 @@ if __name__ == '__main__':
     plt.title("Combined Best Masks", fontsize=18)
     plt.axis('off')
     plt.show()
-    '''
+
     # testing baseline model
     output_directory = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/'
 
@@ -614,3 +607,4 @@ if __name__ == '__main__':
 
             sample_image, sample_image_npy = get_file_data(file_name)
             baselineModel(sample_image, sample_image_npy)
+    '''

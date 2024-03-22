@@ -62,6 +62,7 @@ def mergeDf(experiment_data, texture_data):
 
 def getOptimisedData(experiment_df, texture_df):
     mergedData = mergeDf(experiment_df, texture_df)
+    mergedData = mergedData[(mergedData['CAM_Threshold'] < 0.3)]
     top_2_iou_results = mergedData.groupby('file_name')['IoU_Result'].nlargest(2)
     top_2_iou_results = top_2_iou_results.reset_index()
     top_2_rows = mergedData.loc[top_2_iou_results.level_1]
@@ -78,6 +79,7 @@ def multi_layer_perceptron(optimised_data):
     model = Sequential()
     model.add(Dense(16, activation='relu', input_shape=(input_size,)))
     model.add(Dense(8, activation='relu'))
+    model.add(Dense(16, activation='relu'))
     model.add(Dense(2, activation='linear'))
     model.compile(loss='mean_squared_error', optimizer='adam')
     model.fit(X_train, y_train, epochs=50, batch_size=1, verbose=1)
@@ -93,7 +95,7 @@ def predictThresholds(X_inputs):
     
     return saved_model.predict(X_inputs)
 
-'''
+
 if __name__ == "__main__":
     
     experiment_df = read_results()
@@ -113,4 +115,4 @@ if __name__ == "__main__":
     #selected_data_normalized = scaler.transform(selected_data)
     #print(selected_data_normalized)
     print(predictThresholds(selected_data))
-'''
+
