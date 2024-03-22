@@ -240,11 +240,17 @@ def get_input(pointAnnoFile, boxAnnoFile):
     return boxes_to_points
 
 
-def run_sam(sam_predictor, input_points, input_labels, input_boxes=None):
-    if input_boxes is not None:
+def run_sam(sam_predictor, input_points=None, input_labels=None, input_boxes=None):
+    if input_boxes is None:
         masks, scores , logits = sam_predictor.predict(
         point_coords=input_points,
         point_labels=input_labels,
+        multimask_output=True, 
+        )
+    elif input_points is None:
+        masks, scores , logits = sam_predictor.predict(
+        point_coords=None,
+        point_labels=None,
         box = input_boxes,
         multimask_output=True, 
         )
@@ -252,8 +258,10 @@ def run_sam(sam_predictor, input_points, input_labels, input_boxes=None):
         masks, scores , logits = sam_predictor.predict(
         point_coords=input_points,
         point_labels=input_labels,
+        box = input_boxes,
         multimask_output=True, 
         )
+        
 
     return masks, scores , logits
 
@@ -440,13 +448,15 @@ def baselineModel(sample_image, sample_image_npy):
     max_retries = 0  # Maximum number of retries
 
     try:
-        pointAnno = baselinePointSelection(sample_image_npy)
+        #pointAnno = baselinePointSelection(sample_image_npy)
+        boxAnno = groundingdino(file_name)
+        input_boxes = np.load(boxAnno)[0]
         sam_predictor = set_up_SAM()
         sam_process_image(sam_predictor, sample_image)
-        input_point = np.array([pointAnno])
-        input_label = [1]
+        #input_point = np.array([pointAnno])
+        #input_label = [1]
             
-        masks, scores, logits = run_sam(sam_predictor, input_point, input_label)
+        masks, scores, logits = run_sam(sam_predictor, input_boxes = input_boxes)
         best_mask_index = np.argmax(scores)
         best_mask = masks[best_mask_index]
         best_mask = np.array(best_mask)
@@ -459,7 +469,12 @@ def baselineModel(sample_image, sample_image_npy):
             plt.figure(figsize=(10, 10))
             plt.imshow(sample_image)
             show_mask(best_mask, plt.gca())
-            plt.scatter(input_point[:, 0], input_point[:, 1], color='red', marker='*', s=400)
+            #plt.scatter(input_point[:, 0], input_point[:, 1], color='red', marker='*', s=400)
+            x_min, y_min, x_max, y_max = input_boxes
+            width = x_max - x_min
+            height = y_max - y_min
+            rect = plt.Rectangle((x_min, y_min), width, height, linewidth=2, edgecolor='r', facecolor='none')
+            plt.gca().add_patch(rect)
             plt.axis('off')
             saving_file_name = file_name + '_' +  str(iou_result) + '_' + '_mask.png'
             output_file = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/best_masks/' + saving_file_name 
@@ -473,7 +488,7 @@ def baselineModel(sample_image, sample_image_npy):
 
 
 if __name__ == '__main__':
-
+    '''
     # predict CAM and sobel thresholds in batch
     files = []
     with open("C:/Users/snack/Desktop/CAM4SAM/temp_files/classZeroSingleInstanceImages.txt", "r") as file:
@@ -507,7 +522,7 @@ if __name__ == '__main__':
             threshold_idx += 1
     
     output_directory = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/'
-    '''
+    
     # testing threshold ranges for a set of images
     thresholds = {
             'cam': [0.1, 0.2, 0.3, 0.4, 0.5, 0.6], 
@@ -585,7 +600,7 @@ if __name__ == '__main__':
     plt.title("Combined Best Masks", fontsize=18)
     plt.axis('off')
     plt.show()
-
+    '''
     # testing baseline model
     output_directory = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/'
 
@@ -599,4 +614,3 @@ if __name__ == '__main__':
 
             sample_image, sample_image_npy = get_file_data(file_name)
             baselineModel(sample_image, sample_image_npy)
-    '''
