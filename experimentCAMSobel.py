@@ -30,6 +30,7 @@ import torch
 # Local application/library specific imports
 from groundingdino.util.inference import load_model, load_image, predict, annotate
 from segment_anything import sam_model_registry, SamPredictor
+from peakActivation import texture_analysis, predictThresholds
 
 
 def get_file_data(file_name):
@@ -368,11 +369,11 @@ def experiment(file_name, thresholds, sample_image, sample_image_npy, sobel_filt
     return None
 
 
-def refinedSAM(sample_image, sample_image_npy, sobel_filtered_image):
+def refinedSAM(cam_threshold, sobel_threshold, sample_image, sample_image_npy, sobel_filtered_image):
     iou_result_lst = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/iou_results.txt'
 
-    cam_threshold = 0.2
-    sobel_threshold = 0.7
+    #cam_threshold = 0.2
+    #sobel_threshold = 0.7
     max_retries = 4  # Maximum number of retries
 
     for _ in range(max_retries):
@@ -472,10 +473,24 @@ def baselineModel(sample_image, sample_image_npy):
 
 
 if __name__ == '__main__':
-    '''
+
+    # predict CAM and sobel thresholds in batch
+    files = []
+    with open("C:/Users/snack/Desktop/CAM4SAM/temp_files/classZeroSingleInstanceImages.txt", "r") as file:
+        for line in tqdm(file):
+            line = line.strip()
+            file_name = line.replace(".npy", "")
+            files.append(file_name)
+
+    scaled_texture_df, _ = texture_analysis(files = files)
+    selected_data = scaled_texture_df[['contrast', 'correlation', 'energy', 'homogeneity']]
+    optimalThresholds = predictThresholds(selected_data)
+    #print(optimalThresholds)
+
     # running refined SAM to get results
     output_directory = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/'
 
+    threshold_idx = 0
     with open("C:/Users/snack/Desktop/CAM4SAM/temp_files/classZeroSingleInstanceImages.txt", "r") as file:
         for line in tqdm(file):
             line = line.strip()
@@ -484,9 +499,12 @@ if __name__ == '__main__':
             print(file_name)
             sys.stdout.flush() 
 
+            cam_threshold, sobel_threshold = optimalThresholds[threshold_idx][0], optimalThresholds[threshold_idx][1]
             sample_image, sample_image_npy = get_file_data(file_name)
             sobel_filtered_image = sobel_filter(sample_image_npy)
-            refinedSAM(sample_image, sample_image_npy, sobel_filtered_image)
+            refinedSAM(cam_threshold, sobel_threshold, sample_image, sample_image_npy, sobel_filtered_image)
+
+            threshold_idx += 1
     
     output_directory = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/'
     '''
@@ -515,7 +533,7 @@ if __name__ == '__main__':
             #    for i, (iou, threshold) in enumerate(zip(mask_results, threshold_combi)):
             #        line = f"Top {i+1}: IOU = {iou}, threshold = {threshold}\n"
             #        f.write(line)
-    '''
+    
     # testing on single image
     file_name="2009_005120"
     sample_image, sample_image_npy = get_file_data(file_name)
