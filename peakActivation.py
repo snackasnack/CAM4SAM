@@ -62,7 +62,7 @@ def mergeDf(experiment_data, texture_data):
 
 def getOptimisedData(experiment_df, texture_df):
     mergedData = mergeDf(experiment_df, texture_df)
-    mergedData = mergedData[(mergedData['CAM_Threshold'] < 0.2)]
+    #mergedData = mergedData[(mergedData['CAM_Threshold'] < 0.2)]
     top_2_iou_results = mergedData.groupby('file_name')['IoU_Result'].nlargest(2)
     top_2_iou_results = top_2_iou_results.reset_index()
     top_2_rows = mergedData.loc[top_2_iou_results.level_1]
