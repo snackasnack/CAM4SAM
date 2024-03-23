@@ -1,4 +1,5 @@
 import os 
+import numpy as np
 
 file_path = "C:/Users/snack/Desktop/CAM4SAM/temp_files/allClassesSegmented.txt"
 updated_lines = []
@@ -17,7 +18,10 @@ with open(file_path, "r") as file:
             # If image does not have its .npy form
             image_path = os.path.join('C:/Users/snack/Desktop/SEAM/voc12/out_cam/', file_name + '.npy')
             with open(image_path, "rb"):
-                pass 
+                data = np.load(image_path, allow_pickle=True).item() 
+                if len(data) > 1:
+                    print(f"Removing {file_name} from the list")
+                    continue
         except FileNotFoundError:
             print(f"Removing {file_name} from the list")
         else:
