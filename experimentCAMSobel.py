@@ -31,6 +31,7 @@ import torch
 from groundingdino.util.inference import load_model, load_image, predict, annotate
 from segment_anything import sam_model_registry, SamPredictor
 from peakActivation import texture_analysis, predictThresholds
+from extendOtherClasses import get_class_labels_and_indexes_for_image
 
 
 def get_file_data(file_name):
@@ -47,9 +48,9 @@ def get_file_data(file_name):
     return sample_zero_image, sample_npy_data
 
 
-def sobel_filter(image_npy):
-    dx = ndimage.sobel(image_npy[0], axis=0)
-    dy = ndimage.sobel(image_npy[0], axis=1)
+def sobel_filter(image_npy,class_idx):
+    dx = ndimage.sobel(image_npy[class_idx], axis=0)
+    dy = ndimage.sobel(image_npy[class_idx], axis=1)
     sobel_filtered_image = np.hypot(dx, dy)  # Equivalent to sqrt(dx^2 + dy^2)
 
     sobel_filtered_image = sobel_filtered_image / np.max(sobel_filtered_image)
@@ -80,11 +81,11 @@ def baselinePointSelection(sample_npy_data):
     return centroid
 
 
-def pointSelection(cam_threshold, sobel_threshold, sample_npy_data, sobel_filtered_image):
+def pointSelection(cam_threshold, sobel_threshold, sample_npy_data, sobel_filtered_image, class_idx=0):
 
     boundary_points = []
 
-    points_of_interest = np.where((sample_npy_data[0] >= cam_threshold))
+    points_of_interest = np.where((sample_npy_data[class_idx] >= cam_threshold))
     filtered_points_of_interest = remove_outliers(points_of_interest)   
 
     for point in zip(*filtered_points_of_interest):
@@ -128,12 +129,9 @@ def pointSelection(cam_threshold, sobel_threshold, sample_npy_data, sobel_filter
 
 # Grounding DINO
 
-def groundingdino(file_name, TEXT_PROMPT = 'plane', BOX_TRESHOLD = 0.35, TEXT_TRESHOLD = 0.25):
+def groundingdino(file_name, TEXT_PROMPT = 'plane', BOX_TRESHOLD = 0.25, TEXT_TRESHOLD = 0.15):
     model = load_model("C:/Users/snack/Desktop/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py", "C:/Users/snack/Desktop/GroundingDINO/weights/groundingdino_swint_ogc.pth")
     IMAGE_PATH = os.path.join('C:/Users/snack/Desktop/SEAM/VOC2012_data/JPEGImages/', file_name + '.jpg')
-    TEXT_PROMPT = "plane"
-    BOX_TRESHOLD = 0.35
-    TEXT_TRESHOLD = 0.25
 
     image_source, image = load_image(IMAGE_PATH)
 
@@ -262,7 +260,6 @@ def run_sam(sam_predictor, input_points=None, input_labels=None, input_boxes=Non
         multimask_output=True, 
         )
         
-
     return masks, scores , logits
 
 
@@ -291,7 +288,6 @@ def experiment(file_name, thresholds, sample_image, sample_image_npy, sobel_filt
     mask_results = []
     #threshold_combi = []
     
-
     for cam_threshold, sobel_threshold in itertools.product(thresholds['cam'], thresholds['sobel']):
         #print(cam_threshold, sobel_threshold)
         #print(mask_results)
@@ -377,12 +373,15 @@ def experiment(file_name, thresholds, sample_image, sample_image_npy, sobel_filt
     return None
 
 
-def refinedSAM(cam_threshold, sobel_threshold, sample_image, sample_image_npy, sobel_filtered_image):
+def refinedSAM(cam_threshold, sobel_threshold, sample_image, sample_image_npy, sobel_filtered_image, class_label = None, class_idx = None):
     iou_result_lst = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/iou_results.txt'
 
     try:
-        pointAnno = pointSelection(cam_threshold, sobel_threshold, sample_image_npy, sobel_filtered_image)
-        boxAnno = groundingdino(file_name)
+        pointAnno = pointSelection(cam_threshold, sobel_threshold, sample_image_npy, sobel_filtered_image, class_idx)
+        if class_label is not None:
+           boxAnno = groundingdino(file_name, TEXT_PROMPT = class_label) 
+        else: 
+            boxAnno = groundingdino(file_name)
         sam_predictor = set_up_SAM()
         sam_process_image(sam_predictor, sample_image)
         boxes_to_points = get_input(pointAnno, boxAnno)
@@ -429,20 +428,23 @@ def refinedSAM(cam_threshold, sobel_threshold, sample_image, sample_image_npy, s
             plt.savefig(output_file, dpi=300)
         except Exception as e:
             print(f"Error occurred while saving best masked image")
-            baselineModel(sample_image, sample_image_npy, iou_result_lst = iou_result_lst)
+            baselineModel(sample_image, sample_image_npy, class_label, iou_result_lst = iou_result_lst)
     except Exception as e:
         print(f"Error occurred for thresholds, falling back to baseline model: {e}")
-        baselineModel(sample_image, sample_image_npy, iou_result_lst = iou_result_lst)
+        baselineModel(sample_image, sample_image_npy, class_label, iou_result_lst = iou_result_lst)
 
     return None
 
 
-def baselineModel(sample_image, sample_image_npy, iou_result_lst = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/baseline_iou_results.txt'):
+def baselineModel(sample_image, sample_image_npy, class_label = None, iou_result_lst = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/baseline_iou_results.txt'):
     max_retries = 0  # Maximum number of retries
 
     try:
         #pointAnno = baselinePointSelection(sample_image_npy)
-        boxAnno = groundingdino(file_name)
+        if class_label is not None:
+           boxAnno = groundingdino(file_name, TEXT_PROMPT = class_label) 
+        else: 
+            boxAnno = groundingdino(file_name)
         input_boxes = np.load(boxAnno)[0]
         sam_predictor = set_up_SAM()
         sam_process_image(sam_predictor, sample_image)
@@ -484,10 +486,11 @@ if __name__ == '__main__':
     
     # predict CAM and sobel thresholds in batch
     files = []
-    with open("C:/Users/snack/Desktop/CAM4SAM/temp_files/classZeroSingleInstanceImages.txt", "r") as file:
+    with open("C:/Users/snack/Desktop/CAM4SAM/temp_files/allClassesSegmented.txt", "r") as file:
         for line in tqdm(file):
             line = line.strip()
-            file_name = line.replace(".npy", "")
+            #file_name = line.replace(".npy", "")
+            file_name = line.strip()
             files.append(file_name)
 
     scaled_texture_df, _ = texture_analysis(files = files)
@@ -499,22 +502,26 @@ if __name__ == '__main__':
     output_directory = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/'
 
     threshold_idx = 0
-    with open("C:/Users/snack/Desktop/CAM4SAM/temp_files/classZeroSingleInstanceImages.txt", "r") as file:
+    with open("C:/Users/snack/Desktop/CAM4SAM/temp_files/allClassesSegmented.txt", "r") as file:
         for line in tqdm(file):
             line = line.strip()
-            file_name = line.replace(".npy", "")
-
+            #file_name = line.replace(".npy", "")
+            file_name = line.strip()
             print(file_name)
             sys.stdout.flush() 
 
+            class_label, class_idx = get_class_labels_and_indexes_for_image(file_name)
+            print(class_label, class_idx)
             cam_threshold, sobel_threshold = optimalThresholds[threshold_idx][0], optimalThresholds[threshold_idx][1]
+            print(cam_threshold, sobel_threshold)
             sample_image, sample_image_npy = get_file_data(file_name)
-            sobel_filtered_image = sobel_filter(sample_image_npy)
-            refinedSAM(cam_threshold, sobel_threshold, sample_image, sample_image_npy, sobel_filtered_image)
+            sobel_filtered_image = sobel_filter(sample_image_npy, class_idx[0])
+            refinedSAM(cam_threshold, sobel_threshold, sample_image, sample_image_npy, sobel_filtered_image, class_label, class_idx[0])
 
             threshold_idx += 1
     
     output_directory = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/'
+    
     '''
     # testing threshold ranges for a set of images
     thresholds = {
@@ -541,14 +548,16 @@ if __name__ == '__main__':
             #    for i, (iou, threshold) in enumerate(zip(mask_results, threshold_combi)):
             #        line = f"Top {i+1}: IOU = {iou}, threshold = {threshold}\n"
             #        f.write(line)
-    
+    '''
+    '''
     # testing on single image
     file_name="2009_005120"
+    class_label, class_idx = get_class_labels_and_indexes_for_image(file_name)
     sample_image, sample_image_npy = get_file_data(file_name)
-    sobel_filtered_image = sobel_filter(sample_image_npy)
-    pointAnno = pointSelection(0.2, 0.6, sample_image_npy, sobel_filtered_image)
+    sobel_filtered_image = sobel_filter(sample_image_npy, class_idx[0])
+    pointAnno = pointSelection(0.2, 0.6, sample_image_npy, sobel_filtered_image, class_idx[0])
     #pointAnno="C:/Users/snack/Desktop/CAM4SAM/temp_files/points_of_interest.txt"
-    boxAnno = groundingdino(file_name)
+    boxAnno = groundingdino(file_name, class_label)
     sam_predictor = set_up_SAM()
     sam_process_image(sam_predictor, sample_image)
     boxes_to_points = get_input(pointAnno, boxAnno)
@@ -593,7 +602,8 @@ if __name__ == '__main__':
     plt.title("Combined Best Masks", fontsize=18)
     plt.axis('off')
     plt.show()
-
+    '''
+    '''
     # testing baseline model
     output_directory = 'C:/Users/snack/Desktop/CAM4SAM/temp_files/'
 
